@@ -71,6 +71,15 @@ int main()
 }
 ```
 
+## Build
+
+```
+cd third_party\zydis
+mkdir build && cd build
+
+cmake ..
+cmake --build . --config Release
+```
 
 ## Dependency
   - [Zydis](https://github.com/zyantific/zydis)
