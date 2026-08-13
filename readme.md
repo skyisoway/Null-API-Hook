@@ -4,22 +4,26 @@
 [![Dependency](https://img.shields.io/badge/dependency-Zydis-orange)](https://github.com/zyantific/zydis)
 
 
-## Как работает без аллокаций
 
-Главная особенность `Null-API-Hook` - для размещения данных hook не требуется выделять новую память через `VirtualAlloc`, `HeapAlloc`, `malloc` и тд.
-Вместо этого использует память, которая уже присутствует в загруженном PE-модуле.
+## How It Works Without Allocations
 
-Между `VirtualSize` и `SizeOfRawData` остаётся область, которую можно использовать для размещения данных hook. Загрузчик отображает секцию с учётом `SizeOfRawData`, в то время как фактически используемый размер секции определяется `VirtualSize`. Поэтому остается дополнительное пространство размером: `SizeOfRawData - VirtualSize`
+The main feature of `Null-API-Hook` is that it does not require allocating new memory via `VirtualAlloc`, `HeapAlloc`, `malloc`, etc. to store hook data.
 
+Instead, it uses memory that is already present within the loaded PE module.
 
-## Принцип работы
+There is a region between `VirtualSize` and `SizeOfRawData` that can be used to store hook data. The loader maps the section according to `SizeOfRawData`, while the actual size of the section in memory is determined by `VirtualSize`. Therefore, additional space remains, with a size of:
 
-Фактически hook не модифицирует код самой API-функции. Вместо этого он добавляет новое звено в pipeline выполнения функции.
+`SizeOfRawData - VirtualSize`
 
-Для перенаправления вызова модифицируется `Import Address Table (IAT)`: адрес исходной функции заменяется на адрес `Detour`.
-Для библиотек также модифицируется `Export Address Table (EAT)`, чтобы экспортируемая функция указывала на `Detour`.
+## How It Works
 
-Таким образом, схема выполнения выглядит следующим образом:
+In practice, the hook does not modify the code of the API function itself. Instead, it adds a new link to the function's execution pipeline.
+
+To redirect the call, the `Import Address Table (IAT)` is modified: the address of the original function is replaced with the address of the `Detour`.
+
+For libraries, the `Export Address Table (EAT)` is also modified so that the exported function points to the `Detour`.
+
+Thus, the execution flow looks as follows:
 
 ```text
 API Call
@@ -65,22 +69,8 @@ int main()
         return 0;
     }
 }
-
 ```
 
-## Используемые вызовы
-
-Во время установки и работы hook используются следующие функции:
-
-```text
-Windows API
-    VirtualProtect
-    GetModuleHandleA
-
-LIB
-  memset
-  strstr
-```
 
 ## Dependency
   - [Zydis](https://github.com/zyantific/zydis)

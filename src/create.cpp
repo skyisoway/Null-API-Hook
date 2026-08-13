@@ -3,7 +3,7 @@
 namespace null
 {
 
-	std::size_t EncodeHook(std::uint8_t *buffer, void *detour)
+	std::size_t EncodeHook(_Out_ std::uint8_t *buffer, _In_ void *detour)
 	{
 		std::uint8_t *start = buffer;
 
@@ -38,6 +38,8 @@ namespace null
 			std::size_t lenght = sizeof(request);
 			if (ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&request, buffer, &lenght)))
 				return lenght;
+
+			return 0;
 		};
 
 		{
@@ -89,7 +91,7 @@ namespace null
 		return buffer - start;
 	}
 
-	void *GetBufferWithAddressByProcName(void *hModule, _In_ const char *procName)
+	void *GetBufferWithAddressByProcName(HANDLE hModule, _In_ const char *procName)
 	{
 		if (!hModule || !procName)
 			return nullptr;
@@ -118,6 +120,59 @@ namespace null
 		return nullptr;
 	}
 
+	void SplitIAddressInModule(HookState *state, _In_ void *apiAddress, _In_ void *hook)
+	{
+		PEB *peb = win::kernelbase::ProcessEnvironmentBlock();
+
+		LIST_ENTRY *first_entry = peb->Ldr->InMemoryOrderModuleList.Flink;
+		LDR_DATA_TABLE_ENTRY *table = (LDR_DATA_TABLE_ENTRY *)(first_entry);
+
+		DWORD oldProtect = 0;
+		while (first_entry != 0)
+		{
+			if (!table->FullDllName.Length || !table->FullDllName.Buffer)
+				break;
+
+			if (state->iat.size >= NULL_MAX_IAT_MODULE)
+				return;
+
+			void *pImageBase = (HMODULE)table->Reserved2[0];
+
+			IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)pImageBase;
+			IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)((char *)pImageBase + dos->e_lfanew);
+
+			IMAGE_DATA_DIRECTORY dataDirectory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT];
+
+			{
+				std::size_t *pImport = (std::size_t *)((char *)dos + dataDirectory.VirtualAddress);
+
+				while (dataDirectory.Size)
+				{
+					if (*pImport == (std::size_t)apiAddress)
+					{
+						if (!win::kernelbase::VirtualProtect(pImport, sizeof(std::size_t), PAGE_READWRITE, &oldProtect))
+							return;
+
+						state->iat.arrayIA[state->iat.size] = pImport;
+						state->iat.size++;
+
+						*pImport = (std::size_t)hook;
+
+						win::kernelbase::VirtualProtect(pImport, sizeof(std::size_t), oldProtect, &oldProtect);
+
+						break;
+					}
+
+					dataDirectory.Size -= sizeof(std::size_t);
+					pImport++;
+				}
+			}
+
+			first_entry = first_entry->Flink;
+			table = (LDR_DATA_TABLE_ENTRY *)(first_entry);
+		}
+	}
+
 	HookStatus CreateHook(_Out_ LibraryState *lState, _Out_ HookState *hState, _In_ HANDLE hModule,
 						  _In_ const char *procName, _In_ void *detour)
 	{
@@ -143,9 +198,9 @@ namespace null
 			lState->memory.pCurrent = lState->memory.pStart;
 			lState->memory.size = firstSection->SizeOfRawData - firstSection->Misc.VirtualSize;
 
-			if (!VirtualProtect(lState->memory.pStart, lState->memory.size, PAGE_EXECUTE_READWRITE, &oldProtect))
+			if (!win::kernelbase::VirtualProtect(lState->memory.pStart, lState->memory.size, PAGE_EXECUTE_READWRITE,
+												 &oldProtect))
 				return NULL_ERROR;
-			
 		}
 
 		if (!lState->memory.size || lState->memory.size < 100)
@@ -168,15 +223,16 @@ namespace null
 			lState->memory.pCurrent = (char *)hModule + nextSection->VirtualAddress + nextSection->Misc.VirtualSize;
 			lState->memory.size = nextSection->SizeOfRawData - nextSection->Misc.VirtualSize;
 
-			if (!VirtualProtect(lState->memory.pStart, lState->memory.size, PAGE_EXECUTE_READWRITE, &oldProtect))
+			if (!win::kernelbase::VirtualProtect(lState->memory.pStart, lState->memory.size, PAGE_EXECUTE_READWRITE,
+												 &oldProtect))
 				return NULL_ERROR;
 		}
 
 		hState->procName = procName;
 
-		hState->function.detour = detour;
-		hState->function.hook = lState->memory.pCurrent;
-		hState->function.origin = (char *)hModule + *bufferWithAddress;
+		hState->function.pDetour = detour;
+		hState->function.pHook = lState->memory.pCurrent;
+		hState->function.pOrigin = (char *)hModule + *bufferWithAddress;
 
 		hState->hookRVA = ((std::size_t)lState->memory.pCurrent - (std::size_t)hModule);
 		hState->exportRVA = *bufferWithAddress;
@@ -185,43 +241,15 @@ namespace null
 
 		// GET FUNCTION IN IAT
 		{
-			HANDLE hCurrentModlue = GetModuleHandleA(nullptr);
-
-			IMAGE_DOS_HEADER *dosCurrent = (IMAGE_DOS_HEADER *)hCurrentModlue;
-			IMAGE_NT_HEADERS *ntCurrent = (IMAGE_NT_HEADERS *)((char *)hCurrentModlue + dosCurrent->e_lfanew);
-
-			IMAGE_DATA_DIRECTORY dataDirectory = ntCurrent->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT];
-
-			std::size_t *pImport = (std::size_t *)((char *)dosCurrent + dataDirectory.VirtualAddress);
-
-			while (dataDirectory.Size)
-			{
-				dataDirectory.Size -= sizeof(std::size_t);
-
-				if (*pImport == (std::size_t)hState->function.origin)
-				{
-					hState->pIAT = pImport;
-
-					if (!VirtualProtect(pImport, sizeof(std::size_t), PAGE_READWRITE, &oldProtect))
-						return NULL_ERROR;
-
-					*pImport = (std::size_t)lState->memory.pCurrent;
-
-					VirtualProtect(pImport, sizeof(std::size_t), oldProtect, &oldProtect);
-
-					break;
-				}
-
-				pImport++;
-			}
+			SplitIAddressInModule(hState, hState->function.pOrigin, hState->function.pHook);
 		}
 
 		{
-			if (!VirtualProtect(bufferWithAddress, sizeof(std::int32_t), PAGE_READWRITE, &oldProtect))
+			if (!win::kernelbase::VirtualProtect(bufferWithAddress, sizeof(std::int32_t), PAGE_READWRITE, &oldProtect))
 				return NULL_ERROR;
-			*bufferWithAddress = (std::size_t)lState->memory.pCurrent - (std::size_t)lState->hModule;
+			*bufferWithAddress = ((std::size_t)lState->memory.pCurrent - (std::size_t)lState->hModule);
 
-			VirtualProtect(bufferWithAddress, sizeof(std::int32_t), oldProtect, &oldProtect);
+			win::kernelbase::VirtualProtect(bufferWithAddress, sizeof(std::int32_t), oldProtect, &oldProtect);
 		}
 
 		std::size_t encodeSize = EncodeHook((std::uint8_t *)lState->memory.pCurrent, detour);

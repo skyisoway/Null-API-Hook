@@ -1,6 +1,4 @@
-#include <iostream>
-
-#include "hook.h"
+#include "example.h"
 
 typedef int (*ProtoMessageBoxW)(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption, UINT uType);
 typedef BOOL (*ProtoBeep)(DWORD dwFreq, DWORD dwDuration);
@@ -12,17 +10,17 @@ int HookMessageBoxW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption, UINT uType)
 {
 	std::wcout << L"MessageBoxW: " << lpText << std::endl;
 
-	return ((ProtoMessageBoxW)hMessageBoxW.function.origin)(hWnd, L"Hello from MessageBoxW hook!", lpCaption, uType);
+	return ((ProtoMessageBoxW)hMessageBoxW.function.pOrigin)(hWnd, L"Hello from MessageBoxW hook!", lpCaption, uType);
 }
 
 BOOL HookBeep(DWORD dwFreq, DWORD dwDuration)
 {
 	std::cout << "Beep intercepted: freq=" << dwFreq << ", duration=" << dwDuration << std::endl;
 
-	return ((ProtoBeep)hBeep.function.origin)(1000, 500);
+	return ((ProtoBeep)hBeep.function.pOrigin)(1000, 500);
 }
 
-int main()
+void MessageBoxExemple()
 {
 	HMODULE hUser32Module = LoadLibraryA("User32.dll");
 	HMODULE hKernel32Module = LoadLibraryA("KERNEL32.DLL");
@@ -33,14 +31,14 @@ int main()
 	if (!null::CreateHook(&lUser32State, &hMessageBoxW, hUser32Module, "MessageBoxW", HookMessageBoxW))
 	{
 		std::cout << "Error create MessageBoxW hook" << std::endl;
-		return 0;
+		return;
 	}
 
 	if (!null::CreateHook(&lKernel32State, &hBeep, hKernel32Module, "Beep", HookBeep))
 	{
 		std::cout << "Error create Beep hook" << std::endl;
 
-		return 0;
+		return;
 	}
 
 	MessageBoxW(nullptr, L"Original text", L"Test", MB_OK);
@@ -64,5 +62,5 @@ int main()
 	null::DeleteHook(&hMessageBoxW);
 	null::DeleteHook(&hBeep);
 
-	return 0;
+	return;
 }

@@ -10,15 +10,16 @@ namespace null
 		if (!DisableHook(state))
 			return NULL_ERROR;
 
-		std::memset(state->function.hook, 0x0, state->size);
+		std::memset(state->function.pHook, 0x0, state->size);
+		std::memset(state->iat.arrayIA, 0x0, state->iat.size);
 
 		state->size = 0;
-		state->pIAT = nullptr;
+		state->iat.size = 0;
 		state->pExportRVA = nullptr;
 
-		state->function.detour = nullptr;
-		state->function.hook = nullptr;
-		state->function.origin = nullptr;
+		state->function.pDetour = nullptr;
+		state->function.pHook = nullptr;
+		state->function.pOrigin = nullptr;
 
 		state->exportRVA = 0;
 		state->hookRVA = 0;
